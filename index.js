@@ -21,7 +21,7 @@ const STORE_NAME = 'translations';
 const METADATA_BACKUP_KEY = 'llmTranslationCacheBackup'; // 메타데이터 백업 키
 const RULE_PROMPT_KEY = 'llmRulePrompt'; // 규칙 프롬프트 메타데이터 키
 const extensionName = "llm-translator-custom";
-const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
+const extensionFolderPath = `scripts/extensions/third-party/llm-translator-custom-test`;
 const DEBUG_MODE = false; // 디버그 로그 활성화 플래그
 
 // [변경] 마스킹 패턴 상수 (단일 고정)

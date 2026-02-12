@@ -40,6 +40,27 @@
                 <option value="original_first">원문 먼저 보기</option>
                 <option value="unfolded">펼침 방식</option>
             </select>
+            
+            <!-- ★★★ 추천 위치: 전역 설정 구역 ★★★ -->
+            <div style="margin-top: 10px; margin-bottom: 5px;">
+                <label for="llm_user_regexes" class="flex-container align-items-center space-between">
+                    <span>보호할 텍스트 (번역 제외)</span>
+                    <i class="fas fa-info-circle" title="이 패턴과 일치하는 텍스트는 번역하지 않고 원문 그대로 유지합니다. (프리셋에 저장됨)&#10;줄바꿈으로 구분하여 입력하세요."></i>
+                </label>
+            </div>
+            <textarea id="llm_user_regexes" class="text_pole" rows="3" placeholder="예: Name: 또는 /<tag>.*?<\/tag>/gi"></textarea>
+			
+			<!-- [추가됨] 접기 금지 설정 -->
+            <div style="margin-top: 10px; margin-bottom: 5px;">
+                <label for="llm_user_no_fold_regexes" class="flex-container align-items-center space-between">
+                    <span>접기 금지 텍스트 (항상 펼침)</span>
+                    <i class="fas fa-info-circle" title="이 패턴과 일치하는 내용이 포함된 줄은 '접기' 모드에서도 항상 펼쳐진 상태로 표시됩니다.&#10;예: 코드 블록, 특정 강조 구문 등&#10;줄바꿈으로 구분하여 입력하세요."></i>
+                </label>
+            </div>
+            <textarea id="llm_user_no_fold_regexes" class="text_pole" rows="3" placeholder="예: ``` 또는 /\[.*?\]/gi"></textarea>
+			
+			
+			
             <hr>
 
             <label class="flex-container">

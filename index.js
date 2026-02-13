@@ -80,7 +80,8 @@ const defaultSettings = {
         google: 'gemini-2.5-pro',
         cohere: 'command',
         vertexai: 'gemini-2.5-pro',
-        openrouter: 'deepseek/deepseek-r1'
+        openrouter: 'deepseek/deepseek-r1',
+        deepseek: 'deepseek-chat'
     },
     custom_model: '',
     throttle_delay: '0',
@@ -196,6 +197,13 @@ const defaultSettings = {
             frequency_penalty: 0.2,
             presence_penalty: 0.5,
             top_p: 0.99
+        },
+        deepseek: {
+            max_length: 4000, 
+            temperature: 0.5,  
+            frequency_penalty: 0,
+            presence_penalty: 0,
+            top_p: 1
         }
     }
 };
@@ -233,6 +241,10 @@ function loadSettings() {
         extensionSettings.parameters.openrouter = defaultSettings.parameters.openrouter;
     }
 
+    if (!extensionSettings.parameters.deepseek) {
+        extensionSettings.parameters.deepseek = defaultSettings.parameters.deepseek;
+    }
+	
     // 4. 공급자 사용 이력 초기화
     if (!extensionSettings.provider_model_history) {
         extensionSettings.provider_model_history = defaultSettings.provider_model_history;
@@ -366,7 +378,7 @@ function updateParameterVisibility(provider) {
     $('.parameter-group').hide();
     
     // 선택된 공급자의 파라미터 그룹만 표시
-    if (provider === 'openrouter') {
+    if (provider === 'openrouter' || provider === 'deepseek') {
         // [추가] OpenRouter는 OpenAI 파라미터 UI를 공유함
         $('.openai_params').show();
     } else {
@@ -384,7 +396,7 @@ function loadParameterValues(provider) {
     // 2. [UI 타겟] 화면에서 조작할 요소의 클래스/ID 접미사 결정
     // OpenRouter는 화면에 자신만의 UI가 없고 OpenAI UI를 빌려 씀
     let targetUiSuffix = provider;
-    if (provider === 'openrouter') {
+    if (provider === 'openrouter' || provider === 'deepseek') {
         targetUiSuffix = 'openai';
     }
 
@@ -433,7 +445,7 @@ function saveParameterValues(provider) {
 
     // 2. [UI 소스] 값을 읽어올 화면 요소 결정
     let targetUiSuffix = provider;
-    if (provider === 'openrouter') {
+    if (provider === 'openrouter' || provider === 'deepseek') {
         targetUiSuffix = 'openai';
     }
 
@@ -580,6 +592,10 @@ function updateModelList() {
             'meta-llama/llama-3-70b-instruct',
             'microsoft/wizardlm-2-8x22b',
             'google/gemini-pro-1.5'
+        ],
+		'deepseek': [
+            'deepseek-chat',    // V3
+            'deepseek-reasoner' // R1 (추론 모델)
         ]
     };
 
@@ -676,9 +692,13 @@ async function callLLMAPI(fullPrompt) {
             apiKey = secret_state[SECRET_KEYS.VERTEXAI] || secret_state[SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT];
             chatCompletionSource = 'vertexai';
             break;
-        case 'openrouter': // [추가] OpenRouter 분기
+        case 'openrouter':
             apiKey = secret_state[SECRET_KEYS.OPENROUTER];
             chatCompletionSource = 'openrouter';
+            break;
+        case 'deepseek': // [추가] OpenRouter 분기
+            apiKey = secret_state[SECRET_KEYS.DEEPSEEK];
+            chatCompletionSource = 'deepseek';
             break;
         default:
             throw new Error('지원되지 않는 공급자입니다.');
@@ -786,6 +806,7 @@ function extractTranslationResult(data, provider) {
     switch (provider) {
         case 'openai':
         case 'openrouter':
+        case 'deepseek':
             result = data.choices?.[0]?.message?.content?.trim();
             break;
         case 'claude':

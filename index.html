@@ -1,7 +1,7 @@
 <div class="translation_settings">
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b>LLM Translator - custom_V5</b>
+            <b>LLM Translator - custom_V5.1</b>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
 
@@ -41,7 +41,16 @@
                 <option value="unfolded">펼침 방식</option>
             </select>
             
-            <!-- ★★★ 추천 위치: 전역 설정 구역 ★★★ -->
+			<div class="inline-drawer" style="margin-top: 10px;">
+				<label for="llm_auto_mode">자동 번역 모드</label>
+			</div>
+			<select id="llm_auto_mode" class="text_pole">
+				<option value="none">사용 안 함</option>
+				<option value="all">전체 번역 (AI + 유저)</option>
+				<option value="ai">AI 메시지 만</option>
+				<option value="user">유저 메시지 만</option>
+			</select>
+
             <div style="margin-top: 10px; margin-bottom: 5px;">
                 <label for="llm_user_regexes" class="flex-container align-items-center space-between">
                     <span>보호할 텍스트 (번역 제외)</span>
@@ -71,9 +80,6 @@
             </label>
             <label class="flex-container">
                 <input type="checkbox" id="llm_use_reverse_proxy">리버스 프록시 사용
-            </label>
-            <label class="flex-container">
-                <input type="checkbox" id="auto_translate_new_messages">새 메시지 자동 번역
             </label>
             <label class="flex-container">
                 <input type="checkbox" id="force_sequential_matching">문단 순차 매칭 사용

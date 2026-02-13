@@ -46,7 +46,7 @@ function logTranslationStatus() {
 // 전역 디버그 함수 (콘솔에서 수동 호출 가능)
 window.debugLLMTranslator = function () {
     console.log('=== LLM Translator Debug Info ===');
-    console.log('Auto translate enabled:', extensionSettings.auto_translate_new_messages);
+    console.log('Auto translate mode:', extensionSettings.auto_mode);
     console.log('Translation progress:', translationInProgress);
     console.log('Chat translation in progress:', isChatTranslationInProgress);
     logTranslationStatus();
@@ -57,9 +57,19 @@ window.debugLLMTranslator = function () {
 let isChatTranslationInProgress = false;
 
 // 상태 플래그들이 단순화됨
+// [추가] 자동 번역 모드 상수 정의
+const autoModeOptions = {
+    NONE: 'none',
+    ALL: 'all',
+    AI: 'ai',
+    USER: 'user',
+};
 
-// 기본 세팅
-// [수정] defaultSettings 상수 (부분 수정: provider_model_history 및 parameters에 openrouter 추가)
+// [추가] 모드별 허용 그룹 정의
+const incomingTypes = [autoModeOptions.ALL, autoModeOptions.AI];   // AI 메시지 처리 그룹
+const outgoingTypes = [autoModeOptions.ALL, autoModeOptions.USER]; // 유저 메시지 처리 그룹
+
+// [수정] defaultSettings 상수 (auto_translate_new_messages 제거, auto_mode 추가)
 const defaultSettings = {
     translation_display_mode: 'disabled',
     llm_provider: 'openai',
@@ -70,12 +80,12 @@ const defaultSettings = {
         google: 'gemini-2.5-pro',
         cohere: 'command',
         vertexai: 'gemini-2.5-pro',
-        openrouter: 'deepseek/deepseek-r1' // [추가] 오픈라우터 기본 모델
+        openrouter: 'deepseek/deepseek-r1'
     },
     custom_model: '',
     throttle_delay: '0',
     show_input_translate_button: false,
-    auto_translate_new_messages: false,
+    auto_mode: autoModeOptions.NONE, // [변경] 기본값: 사용 안 함
     force_sequential_matching: false,
     hide_legacy_translate_button: false,
     hide_toggle_button: false,
@@ -180,7 +190,6 @@ const defaultSettings = {
             top_k: 0,
             top_p: 0.99
         },
-        // [추가] 오픈라우터 파라미터 (OpenAI와 동일)
         openrouter: {
             max_length: 1000,
             temperature: 0.7,
@@ -192,6 +201,7 @@ const defaultSettings = {
 };
 
 // 기본 설정 로드, UI 초기화
+// 기본 설정 로드, UI 초기화
 function loadSettings() {
     // 1. 기본 설정(Top-level) 불러오기
     for (const key in defaultSettings) {
@@ -200,20 +210,25 @@ function loadSettings() {
         }
     }
 
-    // 설정 마이그레이션: auto_translate_on_swipe → auto_translate_new_messages
-    if (extensionSettings.hasOwnProperty('auto_translate_on_swipe') && !extensionSettings.hasOwnProperty('auto_translate_new_messages')) {
-        extensionSettings.auto_translate_new_messages = extensionSettings.auto_translate_on_swipe;
-        delete extensionSettings.auto_translate_on_swipe;
+    // [마이그레이션] auto_translate_on_swipe / auto_translate_new_messages -> auto_mode
+    // 기존 불리언 설정을 새로운 모드 문자열로 변환
+    if (extensionSettings.hasOwnProperty('auto_translate_new_messages')) {
+        if (extensionSettings.auto_translate_new_messages === true) {
+            extensionSettings.auto_mode = autoModeOptions.ALL;
+        } else {
+            extensionSettings.auto_mode = autoModeOptions.NONE;
+        }
+        delete extensionSettings.auto_translate_new_messages;
+        delete extensionSettings.auto_translate_on_swipe; // 구버전 잔재가 있다면 함께 삭제
         saveSettingsDebounced();
     }
-
+    
     // 2. 파라미터 객체 초기화 (없으면 통째로 생성)
     if (!extensionSettings.parameters) {
         extensionSettings.parameters = defaultSettings.parameters;
     }
     
-    // [핵심 수정] 3. OpenRouter 파라미터가 없으면 기본값에서 복사 (기존 사용자용 패치)
-    // 기존 설정 파일에는 'openrouter' 키가 없으므로 여기서 강제로 주입해야 함
+    // 3. OpenRouter 파라미터가 없으면 기본값에서 복사
     if (!extensionSettings.parameters.openrouter) {
         extensionSettings.parameters.openrouter = defaultSettings.parameters.openrouter;
     }
@@ -222,11 +237,9 @@ function loadSettings() {
     if (!extensionSettings.provider_model_history) {
         extensionSettings.provider_model_history = defaultSettings.provider_model_history;
     }
-    // [추가] OpenRouter 이력이 없으면 추가
     if (!extensionSettings.provider_model_history.openrouter) {
         extensionSettings.provider_model_history.openrouter = defaultSettings.provider_model_history.openrouter;
     }
-
 
     // 현재 선택된 공급자와 프롬프트를 UI에 설정
     const currentProvider = extensionSettings.llm_provider;
@@ -257,8 +270,9 @@ function loadSettings() {
     $('#llm_translation_button_toggle').prop('checked', extensionSettings.show_input_translate_button);
     updateInputTranslateButton();
 
-    // 새 메시지 자동 번역 체크박스 상태 설정
-    $('#auto_translate_new_messages').prop('checked', extensionSettings.auto_translate_new_messages);
+    // [변경] 새 메시지 자동 번역 모드 설정 (드롭다운)
+    $('#llm_auto_mode').val(extensionSettings.auto_mode);
+    
     $('#force_sequential_matching').prop('checked', extensionSettings.force_sequential_matching);
 
     // llmContext 설정 로드
@@ -1914,26 +1928,95 @@ jQuery(async () => {
 function isGeneratingSwipe(messageId) {
     return $(`#chat .mes[mesid="${messageId}"] .mes_text`).text() === '...';
 }
-
 /**
- * 자동 번역을 실행해야 하는지 확인하는 함수 (SillyTavern 기본 번역과 동일)
- * @returns {boolean} Whether to translate automatically
+ * 자동 번역 모드가 허용된 타입인지 확인하는 함수
+ * @param {string[]} allowedTypes 허용된 모드 배열
+ * @returns {boolean} 번역 수행 여부
  */
-function shouldTranslate() {
-    return extensionSettings.auto_translate_new_messages;
+function shouldTranslate(allowedTypes) {
+    return allowedTypes.includes(extensionSettings.auto_mode);
 }
 
+// [전역 변수] 모든 핸들러가 공유하는 대기열과 타이머
+const SHARED_SAFETY = {
+    queue: [],          // 번역 요청 대기열 (AI/User 통합)
+    timer: null,        // 디바운싱 타이머
+    isPopupOpen: false, // 팝업 중복 방지 플래그
+    THRESHOLD: 5,       // 임계값 (이 숫자 이상이면 팝업)
+    DELAY: 300          // 대기 시간 (ms) - 0.3초로 약간 늘림
+};
+
 /**
- * 이벤트 핸들러 생성 함수 (SillyTavern 기본 번역과 동일)
- * @param {Function} translateFunction 번역 함수
- * @param {Function} shouldTranslateFunction 번역 여부 확인 함수
- * @returns {Function} Event handler function
+ * 이벤트 핸들러 생성 함수 (공유 대기열 버전)
  */
 function createEventHandler(translateFunction, shouldTranslateFunction) {
     return (data) => {
-        if (shouldTranslateFunction()) {
-            translateFunction(data);
+        // 1. 번역 대상이 아니면 즉시 종료
+        if (!shouldTranslateFunction()) {
+            return;
         }
+
+        // 2. [공유 대기열]에 작업 추가
+        // 나중에 실행할 함수(func)와 데이터(args)를 객체로 저장
+        SHARED_SAFETY.queue.push({ func: translateFunction, args: data });
+
+        // 3. 기존 타이머가 있으면 초기화 (디바운싱)
+        if (SHARED_SAFETY.timer) {
+            clearTimeout(SHARED_SAFETY.timer);
+        }
+
+        // 4. 새 타이머 설정
+        SHARED_SAFETY.timer = setTimeout(async () => {
+            // 실행 시점에 큐 복사 및 초기화
+            const currentBatch = [...SHARED_SAFETY.queue];
+            SHARED_SAFETY.queue = [];
+            SHARED_SAFETY.timer = null;
+
+            if (currentBatch.length === 0) return;
+
+            // 5. 팝업이 이미 열려있다면? (극단적 상황 방지)
+            // -> 그냥 뒤따라온 배치들은 자동 취소하거나, 혹은 팝업 없이 큐에 쌓을 수도 있음.
+            // 여기서는 안전하게 '이전 팝업 처리 중이면 이번 배치는 자동 스킵' 처리 (또는 조용히 로그만)
+            if (SHARED_SAFETY.isPopupOpen) {
+                console.warn('[LLM Translator] Popup already open. Skipping batch.');
+                return;
+            }
+
+            // 6. 안전장치 발동 조건 확인
+            if (currentBatch.length >= SHARED_SAFETY.THRESHOLD) {
+                SHARED_SAFETY.isPopupOpen = true; // 팝업 열림 플래그
+
+                try {
+                    const confirm = await callGenericPopup(
+                        `<b>${currentBatch.length}개</b>의 메시지 번역 요청이 감지되었습니다.<br><br>` +
+                        `채팅방 입장 직후라면 과거 대화일 수 있습니다.<br>` +
+                        `<b>모두 번역하시겠습니까?</b>`,
+                        POPUP_TYPE.CONFIRM
+                    );
+
+                    if (confirm) {
+                        toastr.info(`${currentBatch.length}개의 메시지 번역을 시작합니다.`);
+                        // 일괄 처리
+                        for (const task of currentBatch) {
+                            // 큐에 저장된 함수와 인자를 꺼내서 실행
+                            await task.func(task.args);
+                        }
+                    } else {
+                        toastr.info('대량 번역 요청이 취소되었습니다.');
+                    }
+                } catch (e) {
+                    console.error(e);
+                } finally {
+                    SHARED_SAFETY.isPopupOpen = false; // 팝업 닫힘 플래그 해제
+                }
+
+            } else {
+                // 7. 임계값 미만(평소 대화) -> 즉시 실행
+                for (const task of currentBatch) {
+                    await task.func(task.args);
+                }
+            }
+        }, SHARED_SAFETY.DELAY);
     };
 }
 
@@ -1974,11 +2057,11 @@ function translateOutgoingMessage(messageId) {
     });
 }
 
-// 이벤트 핸들러들 (SillyTavern 스타일)
-const handleIncomingMessage = createEventHandler(translateIncomingMessage, shouldTranslate);
-const handleOutgoingMessage = createEventHandler(translateOutgoingMessage, shouldTranslate);
+// [변경] 이벤트 핸들러들 - 모드에 따라 incoming/outgoing 그룹 적용
+const handleIncomingMessage = createEventHandler(translateIncomingMessage, () => shouldTranslate(incomingTypes));
+const handleOutgoingMessage = createEventHandler(translateOutgoingMessage, () => shouldTranslate(outgoingTypes));
 
-// 메시지 수정 시 번역문 정리 (공식 스크립트 스타일)
+// [수정] 메시지 수정 시 번역문 정리 및 재번역 로직
 async function handleMessageEdit(messageId) {
     const context = getContext();
     const message = context.chat[messageId];
@@ -1999,7 +2082,7 @@ async function handleMessageEdit(messageId) {
                 await deleteTranslationByOriginalText(previousOriginalText);
                 logDebug(`Message ${messageId} was actually edited. Deleted translation for previous original text: "${previousOriginalText.substring(0, 50)}..."`);
             } catch (error) {
-                // DB에 해당 번역이 없을 수도 있음 (이미 삭제되었거나 없는 경우)
+                // DB에 해당 번역이 없을 수도 있음
                 if (error.message !== 'no matching data') {
                     console.warn(`Failed to delete translation for previous original text:`, error);
                 }
@@ -2014,25 +2097,36 @@ async function handleMessageEdit(messageId) {
             // UI도 즉시 업데이트
             updateMessageBlock(messageId, message);
 
-            // 자동 번역이 켜져있으면 새로 번역
-            if (shouldTranslate()) {
+            // [변경] 자동 번역 모드 확인 및 재번역 실행
+            const isUser = message.is_user;
+            const currentMode = extensionSettings.auto_mode;
+            
+            // 유저 메시지이면서 outgoingTypes에 포함되거나, AI 메시지이면서 incomingTypes에 포함되면 번역
+            const shouldRetranslate = (isUser && outgoingTypes.includes(currentMode)) ||
+                                      (!isUser && incomingTypes.includes(currentMode));
+
+            if (shouldRetranslate) {
                 setTimeout(() => {
-                    translateIncomingMessage(messageId);
+                    translateMessage(messageId, false, 'auto').catch(e => console.warn('Edit auto-translation failed', e));
                 }, 100); // 약간의 지연을 두어 UI 업데이트 후 번역
             }
         } else if (previousOriginalText && previousOriginalText === currentOriginalText) {
-            // 수정 버튼을 눌렀지만 실제로는 수정하지 않은 경우
-            // 아무것도 하지 않음 (번역 데이터 유지)
+            // 수정 버튼을 눌렀지만 실제로는 수정하지 않은 경우 유지
             logDebug(`Message ${messageId} edit button was clicked but no actual changes were made. Keeping translation data.`);
         } else {
-            // previousOriginalText가 없는 경우 (번역이 있었지만 원문 추적이 안 된 경우)
             // 기존 동작 유지
             delete message.extra.display_text;
             updateMessageBlock(messageId, message);
 
-            if (shouldTranslate()) {
+            // [변경] 자동 번역 모드 확인 (위와 동일 로직)
+            const isUser = message.is_user;
+            const currentMode = extensionSettings.auto_mode;
+            const shouldRetranslate = (isUser && outgoingTypes.includes(currentMode)) ||
+                                      (!isUser && incomingTypes.includes(currentMode));
+
+            if (shouldRetranslate) {
                 setTimeout(() => {
-                    translateIncomingMessage(messageId);
+                    translateMessage(messageId, false, 'auto').catch(e => console.warn('Edit auto-translation failed', e));
                 }, 100);
             }
         }
@@ -2237,9 +2331,10 @@ function initializeEventHandlers() {
         saveSettingsDebounced();
         updateInputTranslateButton();
     });
-
-    $('#auto_translate_new_messages').on('change', function () {
-        extensionSettings.auto_translate_new_messages = $(this).is(':checked');
+	
+	// [변경] 자동 번역 모드 드롭다운 변경 이벤트
+    $('#llm_auto_mode').off('change').on('change', function () {
+        extensionSettings.auto_mode = $(this).val();
         saveSettingsDebounced();
     });
 

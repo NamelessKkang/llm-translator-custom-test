@@ -4201,41 +4201,19 @@ function processTranslationText(originalText, translatedText) {
 
 
 
+
 SlashCommandParser.addCommandObject(SlashCommand.fromProps({
     name: 'LlmTranslateLast',
     callback: async () => {
-        console.log('=== /LlmTranslateLast 실행 시작 ===');
-        
-        // 전체 메시지 목록 확인
-        const allMessages = document.querySelectorAll('#chat .mes');
-        console.log('전체 메시지 개수:', allMessages.length);
-        allMessages.forEach((msg, idx) => {
-            const mesId = msg.getAttribute('mesid');
-            const isUser = msg.getAttribute('is_user');
-            console.log(`  [${idx}] mesid=${mesId}, isUser=${isUser}`);
-        });
-        
-        // :last-child 선택
         const lastMessage = document.querySelector('#chat .mes:last-child');
-        const lastMesId = lastMessage?.getAttribute('mesid');
-        const lastIsUser = lastMessage?.getAttribute('is_user');
-        
-        console.log('선택된 :last-child:', {
-            mesId: lastMesId,
-            isUser: lastIsUser
-        });
-        
         let targetButton;
         if (lastMessage) {
             targetButton = lastMessage.querySelector('.mes_llm_translate');
-            console.log('번역 버튼 존재:', !!targetButton);
-            
             if (targetButton) {
-                console.log(`🎯 번역 시작: mesId=${lastMesId}`);
                 targetButton.click();
-                return `마지막 메시지(${lastMesId})를 LLM으로 번역합니다.`;
+                return '마지막 메시지를 LLM으로 번역합니다.';
             } else {
-                return `마지막 메시지(${lastMesId}) LLM 번역 버튼을 찾을 수 없습니다.`;
+                return '마지막 메시지 LLM 번역 버튼을 찾을 수 없습니다.';
             }
         } else {
             return '채팅 메시지가 없습니다.';

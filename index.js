@@ -21,7 +21,7 @@ const STORE_NAME = 'translations';
 const METADATA_BACKUP_KEY = 'llmTranslationCacheBackup'; // 메타데이터 백업 키
 const RULE_PROMPT_KEY = 'llmRulePrompt'; // 규칙 프롬프트 메타데이터 키
 const extensionName = "llm-translator-custom";
-const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
+const extensionFolderPath = `scripts/extensions/third-party/llm-translator-custom-test`;
 const DEBUG_MODE = false; // 디버그 로그 활성화 플래그
 
 // [변경] 마스킹 패턴 상수 (단일 고정)
@@ -3772,423 +3772,282 @@ function emitTranslationUIUpdate(messageId, type) {
 // ============================================================================
 // 메인 함수: analyzeAndAlignSegments
 // ============================================================================
-
 /**
- * 원문과 번역문을 분석하여 세그먼트 배열 생성
- * @param {string} originalText - 원문 (Combined 블록 이미 복원된 상태)
- * @param {string} translatedText - 번역문 (Combined 블록 이미 복원된 상태)
- * @returns {Array} segments - 세그먼트 배열
- */
-function analyzeAndAlignSegments(originalText, translatedText) {
-    // 1. 이중 마스킹 (Combined → NoFold)
-    const { text: origMasked, maps: origMaps } = applyDoubleMasking(originalText, 'ORIG');
-    const { text: transMasked, maps: transMaps } = applyDoubleMasking(translatedText, 'TRANS');
-    
-    // 2. 라인 분리
-    const origLines = preprocessLines(origMasked);
-    const transLines = preprocessLines(transMasked);
-    
-    // 3. 세그먼트 생성
-    const segments = createSegments(origLines, transLines);
-    
-    // 4. 복원 (NoFold → Combined 역순)
-    restoreSegments(segments, origMaps, transMaps);
-    
-    return segments;
-}
-
-// ============================================================================
-// 헬퍼 함수: 마스킹 및 복원
-// ============================================================================
-
-/**
- * 텍스트에 이중 마스킹 적용 (Combined → NoFold)
- * @param {string} text - 원본 텍스트
- * @param {string} prefix - 'ORIG' 또는 'TRANS'
- * @returns {Object} { text: 마스킹된 텍스트, maps: { combined: Map, nofold: Map } }
- */
-function applyDoubleMasking(text, prefix) {
-    // Step 1: Combined 마스킹
-    const combinedResult = maskWithRegexes(
-        text, 
-        getCombinedRegexes(), 
-        prefix === 'TRANS' ? 'COMBINED_TRANS' : 'COMBINED'
-    );
-    
-    // Step 2: NoFold 마스킹 (Combined 플레이스홀더는 자동 스킵됨)
-    const nofoldResult = maskWithRegexes(
-        combinedResult.text, 
-        getNoFoldRegexes(), 
-        prefix === 'TRANS' ? 'NOFOLD_TRANS' : 'NOFOLD'
-    );
-    
-    return {
-        text: nofoldResult.text,
-        maps: {
-            combined: combinedResult.map,
-            nofold: nofoldResult.map
-        }
-    };
-}
-
-/**
- * 정규식 배열로 텍스트 마스킹
- * @param {string} text - 마스킹할 텍스트
- * @param {Array} regexes - 정규식 배열
- * @param {string} type - 'COMBINED', 'COMBINED_TRANS', 'NOFOLD', 'NOFOLD_TRANS'
- * @returns {Object} { text: 마스킹된 텍스트, map: { placeholder: 원본내용 } }
- */
-function maskWithRegexes(text, regexes, type) {
-    const map = {};
-    let index = 0;
-    let result = text;
-    
-    const prefix = `__LLM_TRANSLATOR_${type}_`;
-    const suffix = '__';
-    
-    regexes.forEach(regex => {
-        result = result.replace(regex, (match) => {
-            const placeholder = `${prefix}${index}${suffix}`;
-            map[placeholder] = match;
-            index++;
-            return placeholder;
-        });
-    });
-    
-    return { text: result, map };
-}
-
-/**
- * 세그먼트 배열의 플레이스홀더를 원본 내용으로 복원 (역순)
- * @param {Array} segments - 세그먼트 배열
- * @param {Object} origMaps - { combined: Map, nofold: Map }
- * @param {Object} transMaps - { combined: Map, nofold: Map }
- */
-function restoreSegments(segments, origMaps, transMaps) {
-    // Step 1: NoFold 복원 (먼저)
-    segments.forEach(seg => {
-        if (seg.original) {
-            seg.original = restoreText(seg.original, origMaps.nofold);
-        }
-        if (seg.translated) {
-            seg.translated = restoreText(seg.translated, transMaps.nofold);
-        }
-    });
-    
-    // Step 2: Combined 복원 (나중)
-    segments.forEach(seg => {
-        if (seg.original) {
-            seg.original = restoreText(seg.original, origMaps.combined);
-        }
-        if (seg.translated) {
-            seg.translated = restoreText(seg.translated, transMaps.combined);
-        }
-    });
-}
-
-/**
- * 텍스트 내의 플레이스홀더를 원본으로 복원
- * @param {string} text - 플레이스홀더 포함 텍스트
- * @param {Object} map - { placeholder: 원본내용 }
- * @returns {string} 복원된 텍스트
- */
-function restoreText(text, map) {
-    let result = text;
-    Object.keys(map).forEach(placeholder => {
-        result = result.replace(placeholder, map[placeholder]);
-    });
-    return result;
-}
-
-// ============================================================================
-// 헬퍼 함수: 라인 처리
-// ============================================================================
-
-/**
- * 텍스트를 라인 배열로 전처리
- * @param {string} text - 마스킹된 텍스트
- * @returns {Array} 라인 배열
- */
-function preprocessLines(text) {
-    return (text || '')
-        .replace(/<br\s*\/?>/gi, '\n')
-        .trim()
-        .split('\n')
-        .map(line => line.trim());
-}
-
-/**
- * 플레이스홀더를 제외한 순수 텍스트 라인만 추출
- * @param {Array} lines - 전체 라인 배열
- * @param {string} prefix - 'ORIG' 또는 'TRANS'
- * @returns {Array} 순수 텍스트 라인 배열
- */
-function extractProseLines(lines, prefix) {
-    const isTrans = prefix === 'TRANS';
-    
-    // 플레이스홀더 패턴
-    const combinedPattern = isTrans 
-        ? '__LLM_TRANSLATOR_COMBINED_TRANS_\\d+__'
-        : '__LLM_TRANSLATOR_COMBINED_\\d+__';
-    const nofoldPattern = isTrans
-        ? '__LLM_TRANSLATOR_NOFOLD_TRANS_\\d+__'
-        : '__LLM_TRANSLATOR_NOFOLD_\\d+__';
-    
-    const combinedRegex = new RegExp(`^${combinedPattern}$`);
-    const nofoldRegex = new RegExp(`^${nofoldPattern}$`);
-    
-    return lines.filter(line => 
-        line !== '' && 
-        !combinedRegex.test(line) && 
-        !nofoldRegex.test(line)
-    );
-}
-
-// ============================================================================
-// 헬퍼 함수: 세그먼트 생성
-// ============================================================================
-
-/**
- * 원문/번역문 라인 배열로부터 세그먼트 배열 생성
- * @param {Array} origLines - 원문 라인 배열
- * @param {Array} transLines - 번역문 라인 배열
- * @returns {Array} 세그먼트 배열
- */
-function createSegments(origLines, transLines) {
-    const forceSequential = extensionSettings.force_sequential_matching;
-    
-    // 순수 텍스트 라인 추출
-    const proseOrigLines = extractProseLines(origLines, 'ORIG');
-    const proseTransLines = extractProseLines(transLines, 'TRANS');
-    
-    const segments = [];
-    let proseLineIndex = 0;
-    
-    for (let i = 0; i < origLines.length; i++) {
-        const origLine = origLines[i];
-        const transLine = transLines[i];
-        
-        // 빈 줄 처리
-        if (origLine === '') {
-            segments.push({ type: 'empty' });
-            continue;
-        }
-        
-        // 플레이스홀더 타입 확인
-        const placeholderType = detectPlaceholderType(origLine);
-        
-        if (placeholderType) {
-            // 특수 블록 (Combined 또는 NoFold)
-            segments.push(createPlaceholderSegment(origLine, transLine, placeholderType));
-        } else {
-            // 일반 텍스트
-            const textSegment = createTextSegment(
-                origLine, 
-                transLine, 
-                proseTransLines, 
-                proseLineIndex, 
-                forceSequential
-            );
-            segments.push(textSegment);
-            proseLineIndex++;
-        }
-    }
-    
-    // 순차 매칭 시 남은 번역문 처리
-    if (forceSequential && proseLineIndex < proseTransLines.length) {
-        addRemainingTranslations(segments, proseTransLines, proseLineIndex);
-    }
-    
-    return segments;
-}
-
-/**
- * 라인이 플레이스홀더인지 확인하고 타입 반환
- * @param {string} line - 체크할 라인
- * @returns {string|null} 'combined', 'nofold', 또는 null
- */
-function detectPlaceholderType(line) {
-    if (/^__LLM_TRANSLATOR_COMBINED_\d+__$/.test(line)) {
-        return 'combined';
-    }
-    if (/^__LLM_TRANSLATOR_NOFOLD_\d+__$/.test(line)) {
-        return 'nofold';
-    }
-    return null;
-}
-
-/**
- * 플레이스홀더 세그먼트 생성
- * @param {string} origLine - 원문 플레이스홀더
- * @param {string} transLine - 번역문 라인
- * @param {string} type - 'combined' 또는 'nofold'
- * @returns {Object} 세그먼트 객체
- */
-function createPlaceholderSegment(origLine, transLine, type) {
-    return {
-        type: type,
-        original: origLine,
-        translated: transLine || origLine, // fallback
-        shouldFold: false // Combined와 NoFold 모두 접기 금지
-    };
-}
-
-/**
- * 일반 텍스트 세그먼트 생성
- * @param {string} origLine - 원문 라인
- * @param {string} transLine - 번역문 라인 (같은 인덱스)
- * @param {Array} proseTransLines - 순수 텍스트 번역 라인 배열
- * @param {number} proseLineIndex - 현재 순수 텍스트 인덱스
- * @param {boolean} forceSequential - 순차 매칭 옵션
- * @returns {Object} 세그먼트 객체
- */
-function createTextSegment(origLine, transLine, proseTransLines, proseLineIndex, forceSequential) {
-    let translatedContent = '';
-    let matched = false;
-    
-    if (forceSequential) {
-        // 순차 매칭 모드: 원문 순서대로 번역문 매칭
-        if (proseLineIndex < proseTransLines.length) {
-            translatedContent = proseTransLines[proseLineIndex];
-            matched = true;
-        }
-    } else {
-        // 1:1 라인 매칭 모드: 같은 인덱스 우선
-        const isTransPlaceholder = /^__LLM_TRANSLATOR_(COMBINED|NOFOLD)_TRANS_\d+__$/.test(transLine);
-        
-        if (transLine && !isTransPlaceholder) {
-            translatedContent = transLine;
-            matched = true;
-        } else if (proseLineIndex < proseTransLines.length) {
-            // 인덱스 꼬였을 경우 fallback
-            translatedContent = proseTransLines[proseLineIndex];
-        }
-    }
-    
-    return {
-        type: 'text',
-        original: origLine,
-        translated: translatedContent,
-        shouldFold: true, // 일반 텍스트만 접기 대상
-        matched: matched
-    };
-}
-
-/**
- * 남은 번역문을 세그먼트 배열에 추가 (순차 매칭 모드)
- * @param {Array} segments - 세그먼트 배열 (mutate)
- * @param {Array} proseTransLines - 순수 텍스트 번역 라인 배열
- * @param {number} startIndex - 시작 인덱스
- */
-function addRemainingTranslations(segments, proseTransLines, startIndex) {
-    for (let k = startIndex; k < proseTransLines.length; k++) {
-        segments.push({
-            type: 'text_only_translated',
-            translated: proseTransLines[k],
-            shouldFold: false // 매칭 실패한 텍스트는 접지 않음
-        });
-    }
-}
-
-
-/**
- * [리팩토링 2] 생성기 (Renderer)
- * 분석된 세그먼트를 HTML 문자열로 변환합니다.
- *//**
- * [리팩토링 2] 생성기 (Renderer)
- * 분석된 세그먼트를 HTML 문자열로 변환합니다.
- */
-function renderTranslationHtml(segments) {
-    const displayMode = extensionSettings.translation_display_mode || 'disabled';
-    
-    if (displayMode === 'disabled') return '';
-
-    const htmlParts = [];
-
-    segments.forEach(segment => {
-        if (segment.type === 'empty') {
-            htmlParts.push('');
-            return;
-        }
-
-        // 백틱 보정
-        const safeTranslated = correctBackticks(segment.translated || '');
-        const safeOriginal = segment.original || '';
-
-        // [핵심 변경] 1순위: 접기 금지(No-Fold) 대상인 경우
-        // 번역문, 모드 설정 다 무시하고 '원문'만 그대로 출력합니다.
-        // 이렇게 해야 {{img}} 같은 매크로나 코드 블록, HTML 태그가 details 안에 갇히지 않고 렌더링됩니다.
-        if (!segment.shouldFold) {
-            htmlParts.push(safeTranslated); // <--- 여기입니다! safeTranslated가 아니라 safeOriginal을 넣고 있습니다.
-            return; // 여기서 리턴하여 아래의 details 감싸기 로직을 수행하지 않음
-        }
-
-        // 2순위: 사용자 설정이 '펼침(unfolded)' 모드인 경우
-        if (displayMode === 'unfolded') {
-            if (segment.type === 'text_only_translated') {
-                htmlParts.push(`<span class="translated_text mode-unfolded">${safeTranslated}</span>`);
-            } else {
-                htmlParts.push(
-                    `<span class="translated_text mode-unfolded">${safeTranslated}</span>` +
-                    `<br>` +
-                    `<span class="original_text mode-unfolded">${safeOriginal}</span>`
-                );
-            }
-            return;
-        } 
-
-        // 3순위: 접기 모드 (folded / original_first)
-        if (displayMode === 'folded') {
-            htmlParts.push(
-                `<details class="llm-translator-details mode-folded">` +
-                `<summary class="llm-translator-summary">` +
-                `<span class="translated_text clickable-text-org">${safeTranslated}</span>` +
-                `</summary>` +
-                `<span class="original_text">${safeOriginal}</span>` +
-                `</details>`
-            );
-        } else if (displayMode === 'original_first') {
-            htmlParts.push(
-                `<details class="llm-translator-details mode-original-first">` +
-                `<summary class="llm-translator-summary">` +
-                `<span class="original_text clickable-text-org">${safeOriginal}</span>` +
-                `</summary>` +
-                `<span class="translated_text">${safeTranslated}</span>` +
-                `</details>`
-            );
-        }
-    });
-
-    return htmlParts.join('\n').trim();
-}
-
-/**
- * [리팩토링 3] 관리자 (Coordinator)
- * 기존 함수명을 유지하여 외부 호환성 보장
+ * [리팩토링 V3] 메인 프로세서 - 수정 완료본
+ * 기존의 복잡한 세그먼트/라인 매칭 로직을 폐기하고,
+ * '선결 마스킹 -> 스켈레톤 추출 -> 주입 -> 교차 복원'의 5단계 파이프라인으로 처리합니다.
  */
 function processTranslationText(originalText, translatedText) {
     const displayMode = extensionSettings.translation_display_mode || 'disabled';
 
-    // 1. Disabled 모드면 빠르게 반환
+    // 0. 기본 모드 체크 (빠른 반환)
     if (displayMode === 'disabled') {
-        return correctBackticks(translatedText || '');
+        return correctBackticks(translatedText || ''); // ✅ 수정 3: correctBackticks 추가
     }
 
     try {
-        // 2. 분석 및 짝짓기 (여기서 접기 금지 등 모든 판단 종료)
-        const segments = analyzeAndAlignSegments(originalText, translatedText);
+        // 1. 선결 마스킹 (Phase 1: Isolation)
+        // 원문과 번역문에서 특수 블록(태그, 코드 등)을 미리 격리합니다.
+        const origData = applyIsolation(originalText, 'ORIG');
+        const transData = applyIsolation(translatedText, 'TRANS');
 
-        // 3. HTML 생성
-        return renderTranslationHtml(segments);
+        // 2. 구조 분석 (Phase 2: Structure Analysis)
+        // 번역문의 줄바꿈과 마스킹 위치를 기준으로 '골격(Skeleton)'을 만듭니다.
+        // 동시에 '순수 텍스트(Queue)'를 추출합니다.
+        const { skeleton, textQueue: transQueue } = analyzeStructure(transData.maskedText);
+        const origQueue = extractPureText(origData.maskedText);
+
+        // 3. 매칭 및 렌더링 (Phase 3 & 4: Matching & Rendering)
+        // 설정과 큐의 상태에 따라 '통짜 모드' 또는 '인터리브 모드'로 HTML을 생성합니다.
+        // ✅ 수정 2: origData, transData 전체 객체 전달
+        let finalHtml = renderTranslation(
+            skeleton,
+            transQueue,
+            origQueue,
+            displayMode,
+            origData,  // 전체 객체 전달
+            transData  // 전체 객체 전달
+        );
+
+        // 4. 최종 복원 (Phase 5: Restoration)
+        // 격리해둔 마스킹 내용을 원래 자리로 되돌립니다. (교차 복원 포함)
+        finalHtml = restoreContent(finalHtml, transData.map, origData.map);
+
+        return correctBackticks(finalHtml);
 
     } catch (error) {
-        console.error('[LLM Translator] Error processing translation text:', error);
-        toastr.error('번역문 처리 중 오류가 발생했습니다.');
-        // 오류 발생 시 최소한의 번역문 표시
+        console.error('[LLM Translator] Error in processTranslationText:', error);
+        // ✅ 수정 4: toastr.error 추가
+        if (window.toastr) {
+            toastr.error('번역문 처리 중 오류가 발생했습니다.');
+        }
+        // 치명적 오류 발생 시 최소한 번역문이라도 보여줌 (안전장치)
         return correctBackticks(translatedText || '');
     }
 }
 
+// ============================================================================
+// Phase 1: Isolation (마스킹 격리)
+// ============================================================================
+
+function applyIsolation(text, source) {
+    if (!text) return { maskedText: '', map: {}, hasMask: false };
+
+    let currentText = text;
+    const map = {};
+    let maskCounter = 0;
+
+    // 1. Combined(번역보호) -> 2. NoFold(접기보호) 순서로 처리
+    const regexGroups = [
+        { regexes: getCombinedRegexes(), type: 'COMBINED' },
+        { regexes: getNoFoldRegexes(), type: 'NOFOLD' }
+    ];
+
+    regexGroups.forEach(group => {
+        group.regexes.forEach(regex => {
+            currentText = currentText.replace(regex, (match) => {
+                // 토큰 형식: __MASK_타입_출처_ID__
+                // 예: __MASK_COMBINED_ORIG_0__
+                const token = `__MASK_${group.type}_${source}_${maskCounter}__`;
+                map[token] = match;
+                maskCounter++;
+                return token;
+            });
+        });
+    });
+
+    return {
+        maskedText: currentText,
+        map: map,
+        hasMask: maskCounter > 0
+    };
+}
+
+// ============================================================================
+// Phase 2: Structure Analysis (골격 및 큐 추출)
+// ============================================================================
+
+function analyzeStructure(text) {
+    const skeleton = [];
+    const textQueue = [];
+
+    // 줄 단위 분해 (기존의 trim() 등 왜곡 행위 금지)
+    const lines = text.split('\n');
+
+    lines.forEach(line => {
+        const trimmedLine = line.trim();
+        
+        // 1. 마스킹 토큰만 있는 줄인가?
+        // (주의: 텍스트 중간에 마스킹이 섞인 건 TEXT로 취급해야 함)
+        if (/^__MASK_[A-Z]+_[A-Z]+_\d+__$/.test(trimmedLine)) {
+            skeleton.push({ type: 'MASK', content: trimmedLine });
+        }
+        // 2. 빈 줄인가? (공백만 있는 경우 포함)
+        else if (trimmedLine === '') {
+            skeleton.push({ type: 'EMPTY', content: line }); // 원본 공백 유지
+        }
+        // 3. 텍스트 줄인가? (접기 대상)
+        else {
+            skeleton.push({ type: 'TEXT', content: line }); // 원본 텍스트 유지
+            textQueue.push(line);
+        }
+    });
+
+    return { skeleton, textQueue };
+}
+
+function extractPureText(text) {
+    const queue = [];
+    const lines = text.split('\n');
+
+    lines.forEach(line => {
+        const trimmedLine = line.trim();
+        // 마스킹 줄이나 빈 줄은 큐에 넣지 않음 (순수 텍스트만 추출)
+        if (!/^__MASK_[A-Z]+_[A-Z]+_\d+__$/.test(trimmedLine) && trimmedLine !== '') {
+            queue.push(line);
+        }
+    });
+
+    return queue;
+}
+
+// ============================================================================
+// Phase 3 & 4: Matching & Rendering (렌더링 전략 결정 및 조립)
+// ============================================================================
+
+// ✅ 수정 2: 함수 시그니처 변경 (origData, transData 전체 객체 받음)
+function renderTranslation(skeleton, transQueue, origQueue, displayMode, origData, transData) {
+    const forceSequential = extensionSettings.force_sequential_matching;
+    const isLengthMismatch = transQueue.length !== origQueue.length;
+    const hasMask = origData.hasMask || transData.hasMask;
+
+    // [전략 결정]
+    // 강제 맞추기 옵션이 꺼져 있고, 문단 수가 다르면 -> '통짜 모드'로 안전하게 표시
+    if (!forceSequential && isLengthMismatch) {
+        if (window.toastr) toastr.warning('문단 불일치: 전체를 하나로 표시합니다.');
+        // ✅ 수정 1: maskedText 전달
+        return renderAllInOne(
+            transQueue, 
+            origQueue, 
+            displayMode, 
+            hasMask, 
+            skeleton,
+            origData.maskedText,
+            transData.maskedText
+        );
+    }
+
+    // 그 외(옵션 켜짐 OR 개수 일치) -> '인터리브 모드' (1:1 접기)
+    return renderInterleaved(skeleton, transQueue, origQueue, displayMode);
+}
+
+// ✅ 수정 1: 함수 시그니처 변경 및 로직 수정
+function renderAllInOne(transQueue, origQueue, displayMode, hasMask, skeleton,
+                        origMaskedText, transMaskedText) {
+    // 원문/번역문 전체 재구성 (구조 보존)
+    const fullTransText = transMaskedText; // 번역문 전체 (마스킹 포함)
+    const fullOrigText = origMaskedText;   // 원문 전체 (마스킹 포함)
+    
+    const separator = '\n\n';
+
+    // 1. 마스킹이 포함된 경우 -> 태그 없이 순수 텍스트 연결 (안전성 최우선)
+    if (hasMask) {
+        if (displayMode === 'original_first') {
+            return fullOrigText + separator + fullTransText;
+        }
+        return fullTransText + separator + fullOrigText;
+    }
+
+    // 2. 텍스트만 있는 경우 -> <details> 사용 가능
+    if (displayMode === 'original_first') {
+        return `<details class="llm-translator-details mode-original-first">
+            <summary class="llm-translator-summary">${fullOrigText}</summary>
+            ${fullTransText}
+        </details>`;
+    }
+    
+    // 기본 (folded, unfolded 등)
+    return `<details class="llm-translator-details mode-folded">
+        <summary class="llm-translator-summary">${fullTransText}</summary>
+        ${fullOrigText}
+    </details>`;
+}
+
+function renderInterleaved(skeleton, transQueue, origQueue, displayMode) {
+    let htmlParts = [];
+    let origIndex = 0;
+
+    // 번역문 골격(Skeleton)을 순회하며 살(Content)을 붙임
+    skeleton.forEach(node => {
+        if (node.type === 'MASK') {
+            htmlParts.push(node.content);
+        } 
+        else if (node.type === 'EMPTY') {
+            // 번역문의 줄바꿈 구조를 100% 존중 (월권 금지)
+            htmlParts.push(node.content); 
+        } 
+        else if (node.type === 'TEXT') {
+            // 접기 대상: 큐에서 하나씩 꺼냄
+            const transText = node.content; // === transQueue.shift() 와 논리적으로 같음
+            
+            // 짝지을 원문이 있으면 가져오고, 없으면 빈 문자열
+            const origText = (origIndex < origQueue.length) ? origQueue[origIndex] : '';
+            origIndex++;
+
+            htmlParts.push(createDetailsTag(transText, origText, displayMode));
+        }
+    });
+
+    return htmlParts.join('\n');
+}
+
+function createDetailsTag(transText, origText, displayMode) {
+    // Unfolded 모드
+    if (displayMode === 'unfolded') {
+        return `<span class="translated_text mode-unfolded">${transText}</span><br>` +
+               `<span class="original_text mode-unfolded">${origText}</span>`;
+    }
+    // Original First 모드
+    if (displayMode === 'original_first') {
+        return `<details class="llm-translator-details mode-original-first">` +
+               `<summary class="llm-translator-summary"><span class="original_text clickable-text-org">${origText}</span></summary>` +
+               `<span class="translated_text">${transText}</span>` +
+               `</details>`;
+    }
+    // Default (Folded)
+    return `<details class="llm-translator-details mode-folded">` +
+           `<summary class="llm-translator-summary"><span class="translated_text clickable-text-org">${transText}</span></summary>` +
+           `<span class="original_text">${origText}</span>` +
+           `</details>`;
+}
+
+// ============================================================================
+// Phase 5: Restoration (교차 복원)
+// ============================================================================
+
+function restoreContent(html, transMap, origMap) {
+    // 정규식: __MASK_타입_출처_ID__ 패턴을 찾음
+    return html.replace(/__MASK_([A-Z]+)_([A-Z]+)_(\d+)__/g, (match, type, source, id) => {
+        // 1. 제 짝(Map)에서 찾기
+        if (source === 'TRANS' && transMap[match]) return transMap[match];
+        if (source === 'ORIG' && origMap[match]) return origMap[match];
+
+        // 2. 교차 복원 (Cross-Restore)
+        // 줄 밀림 등으로 번역문 위치에 원문 키가 들어간 경우 등 대비
+        if (source === 'TRANS') {
+            const crossKey = match.replace('_TRANS_', '_ORIG_');
+            if (origMap[crossKey]) return origMap[crossKey];
+        }
+        if (source === 'ORIG') {
+            const crossKey = match.replace('_ORIG_', '_TRANS_');
+            if (transMap[crossKey]) return transMap[crossKey];
+        }
+
+        // 3. 복원 실패 시 (디버깅용 안전장치)
+        // 토큰 그대로 반환하여 사용자가 문제를 인지할 수 있도록 함
+        return match;
+    });
+}
 
 
 

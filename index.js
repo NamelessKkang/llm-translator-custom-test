@@ -192,9 +192,8 @@ const defaultSettings = {
 };
 
 // 기본 설정 로드, UI 초기화
-// 기본 설정 로드, UI 초기화
 function loadSettings() {
-    // 기본 설정 불러오기
+    // 1. 기본 설정(Top-level) 불러오기
     for (const key in defaultSettings) {
         if (!extensionSettings.hasOwnProperty(key)) {
             extensionSettings[key] = defaultSettings[key];
@@ -208,15 +207,26 @@ function loadSettings() {
         saveSettingsDebounced();
     }
 
-    // 파라미터 없으면 기본 파라미터로 초기화
+    // 2. 파라미터 객체 초기화 (없으면 통째로 생성)
     if (!extensionSettings.parameters) {
         extensionSettings.parameters = defaultSettings.parameters;
     }
+    
+    // [핵심 수정] 3. OpenRouter 파라미터가 없으면 기본값에서 복사 (기존 사용자용 패치)
+    // 기존 설정 파일에는 'openrouter' 키가 없으므로 여기서 강제로 주입해야 함
+    if (!extensionSettings.parameters.openrouter) {
+        extensionSettings.parameters.openrouter = defaultSettings.parameters.openrouter;
+    }
 
-    // 공급자 사용 이력 없으면 기본 설정으로 초기화
+    // 4. 공급자 사용 이력 초기화
     if (!extensionSettings.provider_model_history) {
         extensionSettings.provider_model_history = defaultSettings.provider_model_history;
     }
+    // [추가] OpenRouter 이력이 없으면 추가
+    if (!extensionSettings.provider_model_history.openrouter) {
+        extensionSettings.provider_model_history.openrouter = defaultSettings.provider_model_history.openrouter;
+    }
+
 
     // 현재 선택된 공급자와 프롬프트를 UI에 설정
     const currentProvider = extensionSettings.llm_provider;

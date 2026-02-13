@@ -21,7 +21,7 @@ const STORE_NAME = 'translations';
 const METADATA_BACKUP_KEY = 'llmTranslationCacheBackup'; // 메타데이터 백업 키
 const RULE_PROMPT_KEY = 'llmRulePrompt'; // 규칙 프롬프트 메타데이터 키
 const extensionName = "llm-translator-custom";
-const extensionFolderPath = `scripts/extensions/third-party/llm-translator-custom-test`;
+const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
 const DEBUG_MODE = false; // 디버그 로그 활성화 플래그
 
 // [변경] 마스킹 패턴 상수 (단일 고정)
@@ -4119,7 +4119,7 @@ function renderTranslationHtml(segments) {
         // 번역문, 모드 설정 다 무시하고 '원문'만 그대로 출력합니다.
         // 이렇게 해야 {{img}} 같은 매크로나 코드 블록, HTML 태그가 details 안에 갇히지 않고 렌더링됩니다.
         if (!segment.shouldFold) {
-            htmlParts.push(safeOriginal);
+            htmlParts.push(safeTranslated); // <--- 여기입니다! safeTranslated가 아니라 safeOriginal을 넣고 있습니다.
             return; // 여기서 리턴하여 아래의 details 감싸기 로직을 수행하지 않음
         }
 
@@ -4201,19 +4201,41 @@ function processTranslationText(originalText, translatedText) {
 
 
 
-
 SlashCommandParser.addCommandObject(SlashCommand.fromProps({
     name: 'LlmTranslateLast',
     callback: async () => {
+        console.log('=== /LlmTranslateLast 실행 시작 ===');
+        
+        // 전체 메시지 목록 확인
+        const allMessages = document.querySelectorAll('#chat .mes');
+        console.log('전체 메시지 개수:', allMessages.length);
+        allMessages.forEach((msg, idx) => {
+            const mesId = msg.getAttribute('mesid');
+            const isUser = msg.getAttribute('is_user');
+            console.log(`  [${idx}] mesid=${mesId}, isUser=${isUser}`);
+        });
+        
+        // :last-child 선택
         const lastMessage = document.querySelector('#chat .mes:last-child');
+        const lastMesId = lastMessage?.getAttribute('mesid');
+        const lastIsUser = lastMessage?.getAttribute('is_user');
+        
+        console.log('선택된 :last-child:', {
+            mesId: lastMesId,
+            isUser: lastIsUser
+        });
+        
         let targetButton;
         if (lastMessage) {
             targetButton = lastMessage.querySelector('.mes_llm_translate');
+            console.log('번역 버튼 존재:', !!targetButton);
+            
             if (targetButton) {
+                console.log(`🎯 번역 시작: mesId=${lastMesId}`);
                 targetButton.click();
-                return '마지막 메시지를 LLM으로 번역합니다.';
+                return `마지막 메시지(${lastMesId})를 LLM으로 번역합니다.`;
             } else {
-                return '마지막 메시지 LLM 번역 버튼을 찾을 수 없습니다.';
+                return `마지막 메시지(${lastMesId}) LLM 번역 버튼을 찾을 수 없습니다.`;
             }
         } else {
             return '채팅 메시지가 없습니다.';

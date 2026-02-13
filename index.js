@@ -59,6 +59,7 @@ let isChatTranslationInProgress = false;
 // 상태 플래그들이 단순화됨
 
 // 기본 세팅
+// [수정] defaultSettings 상수 (부분 수정: provider_model_history 및 parameters에 openrouter 추가)
 const defaultSettings = {
     translation_display_mode: 'disabled',
     llm_provider: 'openai',
@@ -68,19 +69,20 @@ const defaultSettings = {
         claude: 'claude-3-5-sonnet-20241022',
         google: 'gemini-2.5-pro',
         cohere: 'command',
-        vertexai: 'gemini-2.5-pro'
+        vertexai: 'gemini-2.5-pro',
+        openrouter: 'deepseek/deepseek-r1' // [추가] 오픈라우터 기본 모델
     },
-    custom_model: '',                        // 커스텀 모델명
+    custom_model: '',
     throttle_delay: '0',
     show_input_translate_button: false,
-    auto_translate_new_messages: false,      // 새 메시지 자동 번역 (AI메시지, 유저메시지, 스와이프)
-    force_sequential_matching: false,        // 문단 순차 매칭 사용
-    hide_legacy_translate_button: false,     // 기존 번역 아이콘(뇌) 숨기기
-    hide_toggle_button: false,               // 번역 전환 아이콘(돋보기) 숨기기  
-    hide_new_translate_button: true,         // 번역/전환 아이콘(좌우화살표) 숨기기
-    hide_paragraph_button: true,             // 문단 수 교정 아이콘(렌치) 숨기기
-    hide_edit_button: false,                 // 번역 수정 아이콘(펜) 숨기기
-    hide_delete_button: true,                // 번역 삭제 아이콘(쓰레기통) 숨기기
+    auto_translate_new_messages: false,
+    force_sequential_matching: false,
+    hide_legacy_translate_button: false,
+    hide_toggle_button: false,
+    hide_new_translate_button: true,
+    hide_paragraph_button: true,
+    hide_edit_button: false,
+    hide_delete_button: true,
     use_reverse_proxy: false,
     reverse_proxy_url: '',
     reverse_proxy_password: '',
@@ -133,15 +135,15 @@ const defaultSettings = {
     llm_prompt_input: 'Please translate the following text to english:',
     llm_prefill_toggle: false,
     llm_prefill_content: 'Understood. Executing the translation as instructed. Here is the translation:',
-    user_defined_regexes: [], //번역 금지 정규식
-    user_no_fold_regexes: [], // 접기 금지 정규식 (No-Fold)
-    selected_translation_prompt_id: null,  // 선택된 프롬프트 ID
-    selected_translation_prompt: null,     // 선택된 프롬프트 내용
-    context_message_count: 5,              // {{llmContext}} 메시지 수
-    context_include_user: false,           // {{llmContext}} 유저 메시지 포함 여부
-    context_exclude_last: true,            // {{llmContext}} 마지막 메시지 제외 (채팅번역시)
-    customPrompts: [],                      // 커스텀 프롬프트 목록
-    presets: [],                            // 프리셋 목록
+    user_defined_regexes: [],
+    user_no_fold_regexes: [],
+    selected_translation_prompt_id: null,
+    selected_translation_prompt: null,
+    context_message_count: 5,
+    context_include_user: false,
+    context_exclude_last: true,
+    customPrompts: [],
+    presets: [],
     temperature: 0.7,
     max_tokens: 1000,
     parameters: {
@@ -177,10 +179,19 @@ const defaultSettings = {
             temperature: 0.7,
             top_k: 0,
             top_p: 0.99
+        },
+        // [추가] 오픈라우터 파라미터 (OpenAI와 동일)
+        openrouter: {
+            max_length: 1000,
+            temperature: 0.7,
+            frequency_penalty: 0.2,
+            presence_penalty: 0.5,
+            top_p: 0.99
         }
     }
 };
 
+// 기본 설정 로드, UI 초기화
 // 기본 설정 로드, UI 초기화
 function loadSettings() {
     // 기본 설정 불러오기
@@ -265,8 +276,7 @@ function loadSettings() {
     // 규칙 프롬프트 로드
     loadRulePrompt();
 
-
-    // 사용자 정의 정규식 로드 (배열을 줄바꿈으로 합쳐서 textarea에 표시)
+    // 사용자 정의 정규식 로드
     const userRegexes = extensionSettings.user_defined_regexes || [];
     $('#llm_user_regexes').val(userRegexes.join('\n'));
 	
@@ -330,19 +340,36 @@ function saveReverseProxySettings() {
 function updateParameterVisibility(provider) {
     // 모든 파라미터 그룹 숨기기
     $('.parameter-group').hide();
+    
     // 선택된 공급자의 파라미터 그룹만 표시
-    $(`.${provider}_params`).show();
+    if (provider === 'openrouter') {
+        // [추가] OpenRouter는 OpenAI 파라미터 UI를 공유함
+        $('.openai_params').show();
+    } else {
+        $(`.${provider}_params`).show();
+    }
 }
 
 // 선택된 공급자의 파라미터 값을 입력 필드에 로드
+// 선택된 공급자의 파라미터 값을 입력 필드에 로드
 function loadParameterValues(provider) {
+    // 1. [데이터 소스] 현재 선택된 공급자(OpenRouter 등)의 설정값을 가져옴 (독립적 관리)
     const params = extensionSettings.parameters[provider];
     if (!params) return;
 
-    // 모든 파라미터 입력 필드 초기화
-    $(`.${provider}_params input`).each(function () {
+    // 2. [UI 타겟] 화면에서 조작할 요소의 클래스/ID 접미사 결정
+    // OpenRouter는 화면에 자신만의 UI가 없고 OpenAI UI를 빌려 씀
+    let targetUiSuffix = provider;
+    if (provider === 'openrouter') {
+        targetUiSuffix = 'openai';
+    }
+
+    // 3. UI 요소 순회하며 값 적용
+    // 주의: 찾을 때는 targetUiSuffix(openai)를 쓰지만, 값은 params(openrouter)에서 가져옴
+    $(`.${targetUiSuffix}_params input`).each(function () {
         const input = $(this);
-        const paramName = input.attr('id').replace(`_${provider}`, '');
+        // ID에서 접미사를 떼어내어 순수 파라미터 키(key)를 추출 (예: frequency_penalty_openai -> frequency_penalty)
+        const paramName = input.attr('id').replace(`_${targetUiSuffix}`, '');
 
         if (params.hasOwnProperty(paramName)) {
             const value = params[paramName];
@@ -358,7 +385,7 @@ function loadParameterValues(provider) {
         }
     });
 
-    // 공통 파라미터 업데이트
+    // 공통 파라미터(Temperature, Max Length) 업데이트
     ['max_length', 'temperature'].forEach(param => {
         if (params.hasOwnProperty(param)) {
             const value = params[param];
@@ -373,18 +400,30 @@ function loadParameterValues(provider) {
 
 // 선택된 공급자의 파라미터 값을 저장
 function saveParameterValues(provider) {
+    // 1. [데이터 타겟] 저장할 대상 객체 복사 (OpenRouter 등)
     const params = { ...extensionSettings.parameters[provider] };
 
     // 공통 파라미터 저장
     params.max_length = parseInt($('#max_length').val());
     params.temperature = parseFloat($('#temperature').val());
 
-    // 공급자별 파라미터 저장
-    $(`.${provider}_params input.neo-range-input`).each(function () {
-        const paramName = $(this).attr('id').replace(`_${provider}`, '');
+    // 2. [UI 소스] 값을 읽어올 화면 요소 결정
+    let targetUiSuffix = provider;
+    if (provider === 'openrouter') {
+        targetUiSuffix = 'openai';
+    }
+
+    // 3. UI에서 값을 읽어서 params 객체에 저장
+    // 화면의 OpenAI 슬라이더 값을 읽지만, 저장은 provider(OpenRouter) 객체에 함
+    $(`.${targetUiSuffix}_params input.neo-range-input`).each(function () {
+        // ID에서 파라미터 이름 추출
+        const paramName = $(this).attr('id').replace(`_${targetUiSuffix}`, '');
+        
+        // 값 읽기 및 저장
         params[paramName] = parseFloat($(this).val());
     });
 
+    // 최종적으로 해당 공급자의 설정에 저장
     extensionSettings.parameters[provider] = params;
     saveSettingsDebounced();
 }
@@ -393,6 +432,7 @@ function saveParameterValues(provider) {
 function getProviderSpecificParams(provider, params) {
     switch (provider) {
         case 'openai':
+        case 'openrouter':
             return {
                 frequency_penalty: params.frequency_penalty,
                 presence_penalty: params.presence_penalty,
@@ -506,6 +546,16 @@ function updateModelList() {
             'gemini-1.5-pro',
             'gemini-1.5-flash-latest',
             'gemini-1.5-flash'
+        ],
+        'openrouter': [
+            'deepseek/deepseek-r1',
+            'deepseek/deepseek-chat',
+            'anthropic/claude-3-opus',
+            'anthropic/claude-3-sonnet',
+            'anthropic/claude-3-haiku',
+            'meta-llama/llama-3-70b-instruct',
+            'microsoft/wizardlm-2-8x22b',
+            'google/gemini-pro-1.5'
         ]
     };
 
@@ -601,6 +651,10 @@ async function callLLMAPI(fullPrompt) {
         case 'vertexai':
             apiKey = secret_state[SECRET_KEYS.VERTEXAI] || secret_state[SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT];
             chatCompletionSource = 'vertexai';
+            break;
+        case 'openrouter': // [추가] OpenRouter 분기
+            apiKey = secret_state[SECRET_KEYS.OPENROUTER];
+            chatCompletionSource = 'openrouter';
             break;
         default:
             throw new Error('지원되지 않는 공급자입니다.');
@@ -707,6 +761,7 @@ function extractTranslationResult(data, provider) {
     let result;
     switch (provider) {
         case 'openai':
+        case 'openrouter':
             result = data.choices?.[0]?.message?.content?.trim();
             break;
         case 'claude':
@@ -4093,7 +4148,6 @@ function restoreContent(html, transMap, origMap) {
         return match;
     });
 }
-
 
 
 

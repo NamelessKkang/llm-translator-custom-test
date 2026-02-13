@@ -790,6 +790,9 @@ async function translate(text, options = {}) {
             });
         });
 
+        // [디버그: 마스킹 추적] 원문에서 기대하는 마스킹 개수 저장
+        const expectedMaskCount = protectedBlocks.length;
+
         // ==================================================================================
         // [기존 로직 복구] 2. 옵션 및 프롬프트 선택 로직 (UI 실시간 반영)
         // ==================================================================================
@@ -870,8 +873,40 @@ async function translate(text, options = {}) {
         // API 호출
         let translatedText = await callLLMAPI(fullPrompt);
 
+        // [디버그: 마스킹 추적] 1. 순수 번역문(Raw) 상태에서의 마스킹 개수 확인
+        let rawMaskCount = 0;
+        if (DEBUG_MODE && expectedMaskCount > 0) {
+            try {
+                // [[__VAR_숫자__]] 패턴 카운트
+                const rawMatches = translatedText.match(/\[\[__VAR_\d+__\]\]/g);
+                rawMaskCount = rawMatches ? rawMatches.length : 0;
+            } catch (e) { console.error('[Debug] Raw mask counting error', e); }
+        }
+
         // [신규 기능 유지] 1차 수리: LLM이 망가뜨린 패턴 복구 (Smart Fix)
         translatedText = fixMalformedPlaceholders(translatedText);
+
+        // [디버그: 마스킹 추적] 2. 보정 후(Fixed) 상태에서의 마스킹 개수 확인 및 로그 출력
+        if (DEBUG_MODE && expectedMaskCount > 0) {
+            try {
+                const fixedMatches = translatedText.match(/\[\[__VAR_\d+__\]\]/g);
+                const fixedMaskCount = fixedMatches ? fixedMatches.length : 0;
+                
+                const statusIcon = expectedMaskCount === fixedMaskCount ? '✅' : '⚠️';
+                const recoverIcon = rawMaskCount !== fixedMaskCount ? '🛠️Fixed' : '-';
+
+                console.groupCollapsed(`[LLM Translator Mask Debug] ${statusIcon} Match: ${fixedMaskCount}/${expectedMaskCount}`);
+                console.log(`Original(Expected): ${expectedMaskCount}`);
+                console.log(`LLM Raw Output  : ${rawMaskCount}`);
+                console.log(`After SmartFix  : ${fixedMaskCount} (${recoverIcon})`);
+                
+                if (expectedMaskCount !== fixedMaskCount) {
+                    console.warn('Mask count mismatch! Some protected blocks might be lost or duplicated.');
+                    console.log('Raw Text:', translatedText);
+                }
+                console.groupEnd();
+            } catch (e) { console.error('[Debug] Fixed mask counting error', e); }
+        }
 
         // [신규 기능 유지] 2차 수리: 번역 후 보호된 텍스트 복구 (Unmasking)
         protectedBlocks.forEach((block, index) => {
@@ -3836,6 +3871,16 @@ function applyIsolation(text, source) {
     let currentText = text;
     const map = {};
     let maskCounter = 0;
+
+    // 0. 선제 마스킹: 원본 텍스트에 토큰 패턴이 이미 존재하는 경우 보호
+    // (사용자가 입력했거나 LLM이 생성한 __MASK_...__ 패턴을 먼저 마스킹)
+    const tokenPattern = /__MASK_[A-Z]+_(ORIG|TRANS)_\d+__/g;
+    currentText = currentText.replace(tokenPattern, (match) => {
+        const token = `__MASK_PREEXIST_${source}_${maskCounter}__`;
+        map[token] = match; // 토큰 자체를 원본으로 저장
+        maskCounter++;
+        return token;
+    });
 
     // 1. Combined(번역보호) -> 2. NoFold(접기보호) 순서로 처리
     const regexGroups = [

@@ -80,7 +80,7 @@ const defaultSettings = {
         google: 'gemini-2.5-pro',
         cohere: 'command',
         vertexai: 'gemini-2.5-pro',
-        openrouter: 'deepseek/deepseek-r1',
+        openrouter: 'google/gemini-2.5-flash-lite',
         deepseek: 'deepseek-chat'
     },
     custom_model: '',
@@ -586,12 +586,17 @@ function updateModelList() {
         'openrouter': [
             'deepseek/deepseek-r1',
             'deepseek/deepseek-chat',
-            'anthropic/claude-3-opus',
-            'anthropic/claude-3-sonnet',
+            'moonshotai/kimi-k2.5',
+            'moonshotai/kimi-k2',
+            'google/gemini-3-pro-preview',
+            'google/gemini-3-flash-preview',
+            'google/gemini-2.5-pro',
+            'google/gemini-2.5-flash',
+			'google/gemini-2.5-flash-lite',
             'anthropic/claude-3-haiku',
             'meta-llama/llama-3-70b-instruct',
             'microsoft/wizardlm-2-8x22b',
-            'google/gemini-pro-1.5'
+			''
         ],
 		'deepseek': [
             'deepseek-chat',    // V3
@@ -1085,7 +1090,7 @@ async function retranslateMessage(messageId, promptType, forceRetranslate = fals
 
     try {
         const originalText = substituteParams(message.mes, context.name1, message.name);
-        const existingTranslation = await getTranslationFromDB(originalText);
+        const existingTranslation = await window.LLMTranslationPlugin.getTranslationFromDB(originalText, { messageId });
 
         let textToRetranslate, prompt;
 
@@ -1137,8 +1142,8 @@ async function retranslateMessage(messageId, promptType, forceRetranslate = fals
         const retranslation = await translate(textToRetranslate, options);
 
         // 결과 저장 및 UI 업데이트
-        await deleteTranslationByOriginalText(originalText);
-        await addTranslationToDB(originalText, retranslation);
+        await window.LLMTranslationPlugin.deleteTranslationByOriginalText(originalText, { messageId });
+        await window.LLMTranslationPlugin.addTranslationToDB(originalText, retranslation, { messageId });
         message.extra.display_text = processTranslationText(originalText, retranslation);
         // 현재 원문을 저장 (메시지 수정 시 이전 원문의 번역을 삭제하기 위해)
         message.extra.original_text_for_translation = originalText;
@@ -1214,6 +1219,9 @@ async function translateMessage(messageId, forceTranslate = false, source = 'man
     try {
         const originalText = substituteParams(message.mes, context.name1, message.name);
 
+        // [추가할 코드] 원문이 없거나 공백뿐이면 즉시 종료 (무한 루프 방지)
+        if (!originalText || !originalText.trim()) return;
+
         // 번역 시작 알림 (조건부)
         // 1. 모든 수동 번역시 표시
         // 2. 자동 번역시: DB에 번역문이 없는 새로운 메시지만 표시 (스와이프 기존 번역 제외)
@@ -1224,7 +1232,7 @@ async function translateMessage(messageId, forceTranslate = false, source = 'man
             showStartToast = true;
         } else if (source === 'auto' && !message.extra.display_text) {
             // 자동 번역시: DB에서 번역문을 가져올 수 있는지 먼저 확인
-            const existingTranslation = await getTranslationFromDB(originalText);
+            const existingTranslation = await window.LLMTranslationPlugin.getTranslationFromDB(originalText, { messageId });
 
             // DB에 번역문이 없는 경우만 토스트 표시 (새로운 메시지)
             if (!existingTranslation) {
@@ -1242,7 +1250,7 @@ async function translateMessage(messageId, forceTranslate = false, source = 'man
         // 자동 번역시 원문이 바뀌었는지 확인
         if (!shouldTranslate && source === 'auto' && message.extra.display_text) {
             // DB에서 현재 원문에 대한 번역이 있는지 확인
-            const cachedForCurrentText = await getTranslationFromDB(originalText);
+            const cachedForCurrentText = await window.LLMTranslationPlugin.getTranslationFromDB(originalText, { messageId });
             if (!cachedForCurrentText) {
                 shouldTranslate = true;
             }
@@ -1250,7 +1258,7 @@ async function translateMessage(messageId, forceTranslate = false, source = 'man
 
         if (shouldTranslate) {
             // 캐시된 번역 확인
-            const cachedTranslation = await getTranslationFromDB(originalText);
+            const cachedTranslation = await window.LLMTranslationPlugin.getTranslationFromDB(originalText, { messageId });
 
             if (cachedTranslation) {
                 message.extra.display_text = processTranslationText(originalText, cachedTranslation);
@@ -1262,7 +1270,7 @@ async function translateMessage(messageId, forceTranslate = false, source = 'man
             } else {
                 // 새로 번역
                 const translation = await translate(originalText);
-                await addTranslationToDB(originalText, translation);
+                await window.LLMTranslationPlugin.addTranslationToDB(originalText, translation, { messageId });
                 message.extra.display_text = processTranslationText(originalText, translation);
             }
 
@@ -1772,7 +1780,7 @@ async function editTranslation(messageId) {
     const originalMessageText = substituteParams(message.mes, context.name1, message.name);
     let originalDbTranslation;
     try {
-        originalDbTranslation = await getTranslationFromDB(originalMessageText);
+        originalDbTranslation = await window.LLMTranslationPlugin.getTranslationFromDB(originalMessageText, { messageId });
         if (originalDbTranslation === null) {
             toastr.error('오류: 화면에는 번역문이 있으나 DB에서 원본을 찾을 수 없습니다.');
             return;
@@ -1825,7 +1833,7 @@ async function editTranslation(messageId) {
         // 삭제 로직
         if (newText.trim() === "") {
             try {
-                await deleteTranslationByOriginalText(originalTextForDbKey);
+                await window.LLMTranslationPlugin.deleteTranslationByOriginalText(originalTextForDbKey, { messageId });
                 delete message.extra.display_text; // 명시적 삭제
                 await updateMessageBlock(messageId, message);
                 await context.saveChat();
@@ -1839,7 +1847,7 @@ async function editTranslation(messageId) {
         else if (newText !== originalDbTranslation) {
             try {
                 // DB 업데이트
-                await updateTranslationByOriginalText(originalTextForDbKey, newText);
+                await window.LLMTranslationPlugin.updateTranslationByOriginalText(originalTextForDbKey, newText, { messageId });
 
                 // 화면 표시 업데이트
                 const processedNewText = processTranslationText(originalTextForDbKey, newText);
@@ -2100,7 +2108,7 @@ async function handleMessageEdit(messageId) {
         if (previousOriginalText && previousOriginalText !== currentOriginalText) {
             // 실제로 원문이 변경된 경우에만 이전 원문의 번역 삭제
             try {
-                await deleteTranslationByOriginalText(previousOriginalText);
+                await window.LLMTranslationPlugin.deleteTranslationByOriginalText(previousOriginalText, { messageId });
                 logDebug(`Message ${messageId} was actually edited. Deleted translation for previous original text: "${previousOriginalText.substring(0, 50)}..."`);
             } catch (error) {
                 // DB에 해당 번역이 없을 수도 있음
@@ -2608,7 +2616,7 @@ function openDB() {
 }
 
 // 데이터 추가 함수 수정
-async function addTranslationToDB(originalText, translation) {
+async function addTranslationToDB(originalText, translation, extraContext = {}) {
     const db = await openDB();
     const provider = extensionSettings.llm_provider;
     const model = extensionSettings.llm_model;
@@ -2781,7 +2789,7 @@ async function restoreDB(file) {
 
 
 // 데이터 업데이트 함수 수정
-async function updateTranslationByOriginalText(originalText, newTranslation) {
+async function updateTranslationByOriginalText(originalText, newTranslation, extraContext = {}) {
     const db = await openDB();
     const provider = extensionSettings.llm_provider;
     const model = extensionSettings.llm_model;
@@ -2826,7 +2834,7 @@ async function updateTranslationByOriginalText(originalText, newTranslation) {
 }
 
 // IndexedDB에서 번역 데이터 가져오는 함수
-async function getTranslationFromDB(originalText) {
+async function getTranslationFromDB(originalText, extraContext = {}) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_NAME, 'readonly');
@@ -2874,7 +2882,7 @@ async function deleteDB() {
 
 
 // IndexedDB 데이터 삭제 함수 (originalText 기반)
-async function deleteTranslationByOriginalText(originalText) {
+async function deleteTranslationByOriginalText(originalText, extraContext = {}) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_NAME, 'readwrite');
@@ -3138,11 +3146,11 @@ async function restoreTranslationsFromMetadata() {
             // 데이터 병합 로직 (Add-Only)
             try {
                 // logDebug(`Checking local DB for item ${i}: "${item.originalText.substring(0,30)}..."`); // 개별 확인 로그 (너무 많을 수 있음)
-                const localTranslationExists = await getTranslationFromDB(item.originalText) !== null;
+                const localTranslationExists = await window.LLMTranslationPlugin.getTranslationFromDB(item.originalText) !== null;
 
                 if (!localTranslationExists) {
                     // logDebug(`Item ${i} not found locally. Adding...`); // 개별 추가 로그
-                    await addTranslationToDB(item.originalText, item.translation /*, item.provider, item.model, item.date */);
+                    await window.LLMTranslationPlugin.addTranslationToDB(item.originalText, item.translation /*, item.provider, item.model, item.date */);
                     addedCount++;
                 } else {
                     // logDebug(`Item ${i} already exists locally. Skipping.`); // 개별 스킵 로그
@@ -3291,7 +3299,7 @@ async function getTranslationById(messageIdStr) {
 
     // 4. DB에서 해당 번역문 조회
     try {
-        const translation = await getTranslationFromDB(originalText);
+        const translation = await window.LLMTranslationPlugin.getTranslationFromDB(originalText, { messageId });
 
         if (translation) {
             logDebug(`Translation found for message ID ${messageId}`);
@@ -3401,7 +3409,7 @@ async function getTranslationsInRange(startIdStr, endIdStr, includeOriginal = fa
 
         try {
             // DB에서 번역문 조회
-            const translation = await getTranslationFromDB(originalText);
+            const translation = await window.LLMTranslationPlugin.getTranslationFromDB(originalText, { messageId });
 
             if (translation && translation.trim() !== '') {
                 // 번역문이 있는 경우
@@ -3533,7 +3541,7 @@ async function deleteTranslationById(messageIdStr, swipeNumberStr) {
 
     // 4. DB에서 해당 번역 데이터 삭제 시도
     try {
-        await deleteTranslationByOriginalText(originalText); // 기존에 만든 DB 삭제 함수 사용
+        await window.LLMTranslationPlugin.deleteTranslationByOriginalText(originalText, { messageId: messageId }); // 기존에 만든 DB 삭제 함수 사용
 
         // 5. 화면(UI)에서도 번역문 제거 (선택적이지만 권장)
         if (message.extra && message.extra.display_text) {
@@ -3872,29 +3880,12 @@ function getCombinedRegexes() {
         /<think>[\s\S]*?<\/think>/gi,
         /<thinking>[\s\S]*?<\/thinking>/gi,
         /<tableEdit>[\s\S]*?<\/tableEdit>/gi,
-        /<details[^>]*>[\s\S]*?<\/details>/gi,
-        /`{3,}[^`]*[\s\S]*?`{3,}/g,
+        ///<details[^>]*>[\s\S]*?<\/details>/gi,
+        ///`{3,}[^`]*[\s\S]*?`{3,}/g,
 		/<UpdateVariable>[\s\S]*?<\/UpdateVariable>/gi,
         /<StatusPlaceHolderImpl\s*\/?>/gi
     ];
 
-    // Font Manager 태그 추가
-    try {
-        const fontManagerSettings = localStorage.getItem('font-manager-settings');
-        if (fontManagerSettings) {
-            const parsedSettings = JSON.parse(fontManagerSettings);
-            const currentPresetId = parsedSettings?.currentPreset;
-            const presets = parsedSettings?.presets || [];
-            const currentPreset = presets.find(p => p.id === currentPresetId);
-            const customTags = currentPreset?.customTags ?? parsedSettings?.customTags ?? [];
-            customTags.forEach(tag => {
-                if (tag.tagName) {
-                    const escapedTagName = tag.tagName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                    specialBlockRegexes.push(new RegExp(`<${escapedTagName}[^>]*>([\\s\\S]*?)</${escapedTagName}>`, 'gi'));
-                }
-            });
-        }
-    } catch (e) { }
 
     // 사용자 정의 정규식 추가
     if (extensionSettings.user_defined_regexes && Array.isArray(extensionSettings.user_defined_regexes)) {
@@ -3927,7 +3918,7 @@ function getNoFoldRegexes() {
         /<StatusPlaceHolderImpl\s*\/?>/gi,
         
         // 코드 블록
-        /^```[\s\S]*?```$/gm,
+        ///^```[\s\S]*?```$/gm,
         
         // HTML (두 가지 케이스)
         /^<!DOCTYPE[\s\S]*?<\/html>/gi,  // DOCTYPE 포함
@@ -5498,3 +5489,200 @@ class PresetManager {
     }
 }
 
+
+
+// IndexedDB 연결 함수
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, 1);
+
+        request.onerror = (event) => {
+            reject(new Error("indexedDB open error"));
+        };
+
+        request.onsuccess = (event) => {
+            resolve(event.target.result);
+        };
+
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            const objectStore = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+            objectStore.createIndex('originalText', 'originalText', { unique: false });
+            objectStore.createIndex('provider', 'provider', { unique: false }); // 프로바이더 인덱스 추가
+            objectStore.createIndex('model', 'model', { unique: false }); // 모델 인덱스 추가
+            objectStore.createIndex('date', 'date', { unique: false }); // 날짜 인덱스 추가
+        };
+    })
+}
+
+// [수정] extraContext 파라미터 추가
+async function addTranslationToDB(originalText, translation, extraContext = {}) {
+    const db = await openDB();
+    const provider = extensionSettings.llm_provider;
+    const model = extensionSettings.llm_model;
+
+    // UTC 시간을 ISO 문자열로 가져오기
+    const utcDate = new Date();
+
+    // 한국 시간으로 변환 (UTC+9)
+    const koreanDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000)); // UTC+9 시간
+
+    // ISO 문자열로 저장
+    const date = koreanDate.toISOString();
+
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+
+        const request = store.add({ originalText: originalText, translation: translation, provider: provider, model: model, date: date });
+
+        request.onsuccess = (event) => {
+            resolve("add success");
+        };
+        request.onerror = (event) => {
+            reject(new Error("add error"));
+        };
+        transaction.oncomplete = function () {
+            db.close();
+        };
+
+    });
+}
+
+// 모든 데이터 가져오기
+async function getAllTranslationsFromDB() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.getAll();
+
+        request.onsuccess = (event) => {
+            resolve(event.target.result);
+        };
+        request.onerror = (event) => {
+            reject(new Error("get all error"));
+        };
+
+        transaction.oncomplete = function () {
+            db.close();
+        };
+    })
+}
+
+// [수정] extraContext 파라미터 추가
+async function updateTranslationByOriginalText(originalText, newTranslation, extraContext = {}) {
+    const db = await openDB();
+    const provider = extensionSettings.llm_provider;
+    const model = extensionSettings.llm_model;
+
+    // UTC 시간을 ISO 문자열로 가져오기
+    const utcDate = new Date();
+
+    // 한국 시간으로 변환 (UTC+9)
+    const koreanDate = new Date(utcDate.getTime() + (9 * 60 * 60 * 1000)); // UTC+9 시간
+
+    // ISO 문자열로 저장
+    const date = koreanDate.toISOString();
+
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const index = store.index('originalText');
+        const request = index.get(originalText);
+
+        request.onsuccess = async (event) => {
+            const record = event.target.result;
+
+            if (record) {
+                const updateRequest = store.put({ ...record, translation: newTranslation, provider: provider, model: model, date: date });
+                updateRequest.onsuccess = () => {
+                    resolve();
+                };
+                updateRequest.onerror = (e) => {
+                    reject(new Error('put error'));
+                };
+            } else {
+                reject(new Error('no matching data'));
+            }
+        };
+        request.onerror = (e) => {
+            reject(new Error('get error'));
+        };
+        transaction.oncomplete = function () {
+            db.close();
+        };
+    });
+}
+
+// [수정] extraContext 파라미터 추가
+async function getTranslationFromDB(originalText, extraContext = {}) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const index = store.index('originalText');
+        const request = index.get(originalText);
+
+        request.onsuccess = (event) => {
+            const record = event.target.result;
+            resolve(record ? record.translation : null);
+        };
+        request.onerror = (e) => {
+            reject(new Error("get error"));
+        };
+        transaction.oncomplete = function () {
+            db.close();
+        };
+    });
+}
+
+
+// [수정] extraContext 파라미터 추가
+async function deleteTranslationByOriginalText(originalText, extraContext = {}) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const index = store.index('originalText');
+        const request = index.get(originalText);
+
+        request.onsuccess = async (event) => {
+            const record = event.target.result;
+            if (record) {
+                const deleteRequest = store.delete(record.id);
+                deleteRequest.onsuccess = () => {
+                    resolve();
+                }
+                deleteRequest.onerror = (e) => {
+                    reject(new Error('delete error'));
+                }
+            } else {
+                reject(new Error('no matching data'));
+            }
+        }
+        request.onerror = (e) => {
+            reject(new Error('get error'));
+        };
+        transaction.oncomplete = function () {
+            db.close();
+        };
+    })
+}
+
+// [추가] 외부 후킹을 위한 전역 객체 노출
+window.LLMTranslationPlugin = {
+    // DB 함수들
+    getTranslationFromDB: getTranslationFromDB,
+    addTranslationToDB: addTranslationToDB,
+    deleteTranslationByOriginalText: deleteTranslationByOriginalText,
+    updateTranslationByOriginalText: updateTranslationByOriginalText,
+    
+    // 설정 객체 (필요 시 접근)
+    extensionSettings: extensionSettings,
+    
+    // 유틸리티
+    translate: translate,
+};
+
+console.log('LLMTranslationPlugin API exposed for hooking.');

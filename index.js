@@ -4148,11 +4148,27 @@ function processTranslationText(originalText, translatedText) {
         const origData = applyIsolation(originalText, 'ORIG');
         const transData = applyIsolation(translatedText, 'TRANS');
 
+        console.groupCollapsed(`🔍 [LLM Translator] Phase 1: 마스킹 결과 (Isolation)`);
+        console.log('1. 원문 마스킹 상태:', origData.maskedText);
+        console.log('2. 번역문 마스킹 상태:', transData.maskedText);
+        console.log('3. 보호된 태그 맵(Map):', { ...origData.map, ...transData.map });
+        console.groupEnd();
+
         // 2. 구조 분석 (Phase 2: Structure Analysis)
         // 번역문의 줄바꿈과 마스킹 위치를 기준으로 '골격(Skeleton)'을 만듭니다.
         // 동시에 '순수 텍스트(Queue)'를 추출합니다.
         const { skeleton, textQueue: transQueue } = analyzeStructure(transData.maskedText);
         const origQueue = extractPureText(origData.maskedText);
+
+        console.groupCollapsed(`💀 [LLM Translator] Phase 2: 구조 분석 (Skeleton)`);
+        console.table(skeleton.map((item, index) => ({
+            Index: index,
+            Type: item.type, // 'TEXT'면 접기 대상, 'SKELETON'/'MASK'면 유지 대상
+            Content: item.content.substring(0, 50) + (item.content.length > 50 ? '...' : '')
+        })));
+        console.log('👉 번역문 큐 (접기 대상):', transQueue);
+        console.log('👉 원문 큐 (접기 대상):', origQueue);
+        console.groupEnd();
 
         // 3. 매칭 및 렌더링 (Phase 3 & 4: Matching & Rendering)
         // 설정과 큐의 상태에 따라 '통짜 모드' 또는 '인터리브 모드'로 HTML을 생성합니다.
@@ -4169,8 +4185,16 @@ function processTranslationText(originalText, translatedText) {
         // 4. 최종 복원 (Phase 5: Restoration)
         // 격리해둔 마스킹 내용을 원래 자리로 되돌립니다. (교차 복원 포함)
         finalHtml = restoreContent(finalHtml, transData.map, origData.map);
+        const result = correctBackticks(finalHtml);
 
-        return correctBackticks(finalHtml);
+        // =================================================================
+        // [디버그 3단계] 최종 복원 후 결과 (Final Result)
+        // =================================================================
+        console.groupCollapsed(`✅ [LLM Translator] Phase 3: 최종 결과 (ST 렌더링 전)`);
+        console.log(result);
+        console.groupEnd();
+
+        return result;
 
     } catch (error) {
         console.error('[LLM Translator] Error in processTranslationText:', error);
